@@ -73,7 +73,7 @@ class LinuxMsgHdr extends BaseMsgHdr {
 
         CmsgHdr[] controls = getControls();
         for (int i = 0; i < controls.length; ++i) {
-            buf.append(((MacOSCmsgHdr) controls[i]).toString("    "));
+            buf.append(((LinuxCmsgHdr) controls[i]).toString("    "));
             if (i < controls.length - 1) {
                 buf.append(",\n");
             } else {
