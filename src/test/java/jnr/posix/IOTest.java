@@ -10,6 +10,9 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 
 /**
  * Created by headius on 5/31/14.
@@ -206,5 +209,100 @@ public class IOTest {
             }
 
         }
+    }
+
+    @Test
+    public void testSendRecvMsg_LotsOfDataControl() throws Throwable {
+        if (!Platform.IS_WINDOWS) {
+            int numberOfThreads = 1000;
+            int numberOfMessages = 10000;
+
+            List<Thread> threads = new ArrayList<Thread>();
+
+            for( int x = 0; x < numberOfThreads; x++ ){
+                threads.add( new Thread( new SocketSender( numberOfMessages ) ) );
+            }
+
+            for( Thread th : threads ){
+                th.start();
+            }
+
+            for( Thread th : threads ){
+                th.join(10000);
+            }
+        }
+    }
+
+    private class SocketSender implements Runnable {
+
+        private int m_numberOfTimes;
+        private int[] m_fds = {0, 0};
+        private Random m_random;
+
+        SocketSender( int numberOfTimes ){
+            m_numberOfTimes = numberOfTimes;
+            m_random = new Random();
+
+            int ret = posix.socketpair(AddressFamily.AF_UNIX.intValue(), Sock.SOCK_STREAM.intValue(), 0, m_fds);
+
+            Assert.assertTrue(ret >= 0);
+            Assert.assertTrue(m_fds[0] > 0);
+            Assert.assertTrue(m_fds[1] > 0);
+
+            ByteBuffer buf = ByteBuffer.allocate(4);
+            buf.order(ByteOrder.nativeOrder());
+            buf.putInt(1).flip();
+
+            ret = posix.libc().setsockopt(m_fds[1],
+                SocketLevel.SOL_SOCKET.intValue(),
+                jnr.constants.platform.SocketOption.SO_PASSCRED.intValue(),
+                buf,
+                buf.remaining());
+
+            Assert.assertTrue(ret >= 0);
+        }
+
+        @Override
+        public void run() {
+            for( int x = 0; x < m_numberOfTimes; x++ ){
+                MsgHdr outMessage = posix.allocateMsgHdr();
+
+                String data = "does this work?";
+                byte[] dataBytes = data.getBytes();
+
+                ByteBuffer[] outIov = new ByteBuffer[1];
+                outIov[0] = ByteBuffer.allocateDirect(dataBytes.length);
+                outIov[0].put(dataBytes);
+                outIov[0].flip();
+
+                outMessage.setIov(outIov);
+
+                int sendStatus = posix.sendmsg(m_fds[0], outMessage, 0);
+
+                Assert.assertTrue(sendStatus == dataBytes.length);
+
+                // ----------------
+
+                MsgHdr inMessage = posix.allocateMsgHdr();
+                ByteBuffer[] inIov = new ByteBuffer[1];
+                inIov[0] = ByteBuffer.allocateDirect(m_random.nextInt( 5000 ) + 100 );
+                inMessage.setIov(inIov);
+                inMessage.allocateControl(512);
+
+                int recvStatus = posix.recvmsg(m_fds[1], inMessage, 0);
+
+                Assert.assertTrue(recvStatus == dataBytes.length);
+
+                // Side-effect of toString needed for this test.
+                // 2020-02-12: the toString method can cause glibc to fail with
+                // an 'unsorted double linked list corrupted' error
+                inMessage.toString();
+
+                for (int i = 0; i < recvStatus; ++i) {
+                    Assert.assertEquals(dataBytes[i], outIov[0].get(i));
+                }
+            }
+        }
+
     }
 }
